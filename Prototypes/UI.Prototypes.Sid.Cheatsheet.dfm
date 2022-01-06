@@ -1,18 +1,47 @@
-object FrameGroups: TFrameGroups
+object SidCheatsheet: TSidCheatsheet
   Left = 0
   Top = 0
-  Width = 493
-  Height = 304
+  ActiveControl = VST
+  Caption = 'SID Abbreviation Cheatsheet'
+  ClientHeight = 512
+  ClientWidth = 493
+  Color = clBtnFace
+  Constraints.MinHeight = 400
+  Constraints.MinWidth = 300
   DoubleBuffered = True
-  ParentDoubleBuffered = False
-  ParentShowHint = False
+  Font.Charset = DEFAULT_CHARSET
+  Font.Color = clWindowText
+  Font.Height = -11
+  Font.Name = 'Tahoma'
+  Font.Style = []
+  OldCreateOrder = False
+  Position = poOwnerFormCenter
   ShowHint = True
-  TabOrder = 0
+  OnCreate = FormCreate
+  PixelsPerInch = 96
+  TextHeight = 13
+  object btnClose: TButton
+    Left = 415
+    Top = 483
+    Width = 75
+    Height = 25
+    Anchors = [akRight, akBottom]
+    Cancel = True
+    Caption = 'Close'
+    ModalResult = 2
+    TabOrder = 1
+    OnClick = btnCloseClick
+  end
   object VST: TVirtualStringTreeEx
+    AlignWithMargins = True
     Left = 0
     Top = 0
     Width = 493
-    Height = 304
+    Height = 479
+    Margins.Left = 0
+    Margins.Top = 0
+    Margins.Right = 0
+    Margins.Bottom = 33
     Align = alClient
     ClipboardFormats.Strings = (
       'CSV'
@@ -24,7 +53,6 @@ object FrameGroups: TFrameGroups
     Header.Height = 24
     Header.Options = [hoColumnResize, hoDblClickResize, hoDrag, hoHotTrack, hoRestrictDrag, hoShowSortGlyphs, hoVisible, hoDisableAnimatedResize, hoHeaderClickAutoSort, hoAutoColumnPopupMenu, hoAutoResizeInclCaption]
     HintMode = hmHint
-    IncrementalSearch = isAll
     SelectionBlendFactor = 64
     TabOrder = 0
     TreeOptions.AutoOptions = [toAutoDropExpand, toAutoScrollOnExpand, toAutoTristateTracking, toAutoDeleteMovedNodes, toAutoChangeScale]
@@ -36,34 +64,26 @@ object FrameGroups: TFrameGroups
     Touch.InteractiveGestureOptions = [igoPanSingleFingerHorizontal, igoPanSingleFingerVertical, igoPanInertia, igoPanGutter, igoParentPassthrough]
     Columns = <
       item
-        Options = [coAllowClick, coDraggable, coEnabled, coParentBidiMode, coParentColor, coResizable, coVisible, coAutoSpring, coSmartResize, coAllowFocus, coDisableAnimatedResize, coEditable, coStyleColor]
         Position = 0
-        Text = 'Friendly Name'
-        Width = 220
+        Text = 'SDDL'
       end
       item
-        Options = [coAllowClick, coDraggable, coEnabled, coParentBidiMode, coParentColor, coResizable, coAutoSpring, coSmartResize, coAllowFocus, coDisableAnimatedResize, coEditable, coStyleColor]
+        Options = [coAllowClick, coDraggable, coEnabled, coParentBidiMode, coParentColor, coResizable, coVisible, coAutoSpring, coSmartResize, coAllowFocus, coDisableAnimatedResize, coEditable, coStyleColor]
         Position = 1
-        Text = 'SID'
-        Width = 280
+        Text = 'Full Name'
+        Width = 300
       end
       item
         Options = [coAllowClick, coDraggable, coEnabled, coParentBidiMode, coParentColor, coResizable, coAutoSpring, coSmartResize, coAllowFocus, coDisableAnimatedResize, coEditable, coStyleColor]
         Position = 2
-        Text = 'SID Type'
-        Width = 110
+        Text = 'SID'
+        Width = 280
       end
       item
         Options = [coAllowClick, coDraggable, coEnabled, coParentBidiMode, coParentColor, coResizable, coVisible, coAutoSpring, coSmartResize, coAllowFocus, coDisableAnimatedResize, coEditable, coStyleColor]
         Position = 3
-        Text = 'State'
-        Width = 100
-      end
-      item
-        Options = [coAllowClick, coDraggable, coEnabled, coParentBidiMode, coParentColor, coResizable, coVisible, coAutoSpring, coSmartResize, coAllowFocus, coDisableAnimatedResize, coEditable, coStyleColor]
-        Position = 4
-        Text = 'Flags'
-        Width = 120
+        Text = 'SID Type'
+        Width = 110
       end>
   end
 end

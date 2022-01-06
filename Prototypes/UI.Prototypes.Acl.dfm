@@ -1,18 +1,14 @@
-object FrameGroups: TFrameGroups
+object FrameAcl: TFrameAcl
   Left = 0
   Top = 0
-  Width = 493
-  Height = 304
-  DoubleBuffered = True
-  ParentDoubleBuffered = False
-  ParentShowHint = False
-  ShowHint = True
+  Width = 477
+  Height = 313
   TabOrder = 0
   object VST: TVirtualStringTreeEx
     Left = 0
     Top = 0
-    Width = 493
-    Height = 304
+    Width = 477
+    Height = 313
     Align = alClient
     ClipboardFormats.Strings = (
       'CSV'
@@ -38,7 +34,7 @@ object FrameGroups: TFrameGroups
       item
         Options = [coAllowClick, coDraggable, coEnabled, coParentBidiMode, coParentColor, coResizable, coVisible, coAutoSpring, coSmartResize, coAllowFocus, coDisableAnimatedResize, coEditable, coStyleColor]
         Position = 0
-        Text = 'Friendly Name'
+        Text = 'Security Prinicipal'
         Width = 220
       end
       item
@@ -48,22 +44,22 @@ object FrameGroups: TFrameGroups
         Width = 280
       end
       item
-        Options = [coAllowClick, coDraggable, coEnabled, coParentBidiMode, coParentColor, coResizable, coAutoSpring, coSmartResize, coAllowFocus, coDisableAnimatedResize, coEditable, coStyleColor]
+        Options = [coAllowClick, coDraggable, coEnabled, coParentBidiMode, coParentColor, coResizable, coVisible, coAutoSpring, coSmartResize, coAllowFocus, coDisableAnimatedResize, coEditable, coStyleColor]
         Position = 2
-        Text = 'SID Type'
-        Width = 110
+        Text = 'Access'
+        Width = 180
       end
       item
         Options = [coAllowClick, coDraggable, coEnabled, coParentBidiMode, coParentColor, coResizable, coVisible, coAutoSpring, coSmartResize, coAllowFocus, coDisableAnimatedResize, coEditable, coStyleColor]
         Position = 3
-        Text = 'State'
-        Width = 100
+        Text = 'ACE Type'
+        Width = 120
       end
       item
         Options = [coAllowClick, coDraggable, coEnabled, coParentBidiMode, coParentColor, coResizable, coVisible, coAutoSpring, coSmartResize, coAllowFocus, coDisableAnimatedResize, coEditable, coStyleColor]
         Position = 4
         Text = 'Flags'
-        Width = 120
+        Width = 100
       end>
   end
 end

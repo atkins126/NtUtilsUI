@@ -3,38 +3,59 @@ unit UI.Prototypes.Privileges;
 interface
 
 uses
-  Winapi.Windows, System.SysUtils, System.Classes, Vcl.Controls, Vcl.Forms,
-  Vcl.Dialogs, Vcl.ComCtrls, VclEx.ListView, Vcl.Menus, Ntapi.ntseapi, NtUtils;
+  Winapi.Windows, Winapi.Messages, System.SysUtils, System.Classes,
+  Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, VirtualTrees,
+  VirtualTreesEx, Ntapi.WinNt, Ntapi.ntseapi, NtUtils, NtUtils.Lsa,
+  DelphiUtils.Arrays;
+
+const
+  colFriendly = 0;
+  colName = 1;
+  colValue = 2;
+  colState = 3;
+  colDescription = 4;
+  colIntegrity = 5;
+  colMax = 6;
 
 type
-  TPrivilegeRecord = record
-    Data: TPrivilege;
-    Name, Description: String;
-    procedure Load(Privilege: TPrivilege; hxPolicy: IHandle);
-  end;
-
   TPrivilegeColoring = (pcStateBased, pcRemoved, pcNone);
 
-  TPrivilegesFrame = class(TFrame)
-    ListViewEx: TListViewEx;
-    procedure ListViewExItemChecked(Sender: TObject; Item: TListItem);
-  private
-    Privileges: TArray<TPrivilegeRecord>;
-    FColoringUnChecked, FCheckedColoring: TPrivilegeColoring;
-    procedure ReloadState(Item: TListItemEx; Attributes: TPrivilegeAttributes);
-    procedure RecolorItem(Item: TListItemEx; Attributes: TPrivilegeAttributes);
-    procedure LoadChecked(Check: TArray<TPrivilege>);
-    function ListChecked: TArray<TPrivilege>;
-    function ListSelected: TArray<TPrivilege>;
-    function GetPrivilege(Index: Integer): TPrivilege;
+  IPrivilege = interface (INodeData)
+    ['{DC6BDFAD-2601-4402-933F-093C87406ED1}']
+    function GetPrivilege: TPrivilege;
+    procedure SetColoringMode(Mode: TPrivilegeColoring);
+    property Privilege: TPrivilege read GetPrivilege;
+    procedure Adjust(NewAttributes: TPrivilegeAttributes);
+  end;
+
+  TPrivilegeNodeData = class (TCustomNodeData, IPrivilege, INodeData)
+    Privilege: TPrivilege;
+    ColoringMode: TPrivilegeColoring;
+    function GetPrivilege: TPrivilege;
+    procedure SetColoringMode(Mode: TPrivilegeColoring);
+    procedure Adjust(NewAttributes: TPrivilegeAttributes);
   public
+    constructor Create(Privilege: TPrivilege; const hxPolicy: ILsaHandle = nil);
+    class function CreateMany(const Privileges: TArray<TPrivilege>): TArray<IPrivilege>;
+  end;
+
+  TFramePrivileges = class(TFrame)
+    VST: TVirtualStringTreeEx;
+    procedure VSTChecked(Sender: TBaseVirtualTree; Node: PVirtualNode);
+  private
+    FColoringUnChecked, FCheckedColoring: TPrivilegeColoring;
+    function NodeToPrivilege(const Node: PVirtualNode): TPrivilege;
+    function NodeComparer(const Node: PVirtualNode): TCondition<PVirtualNode>;
+    function ListSelected: TArray<TPrivilege>;
+    function ListChecked: TArray<TPrivilege>;
+    procedure SetChecked(const NewChecked: TArray<TPrivilege>);
+  public
+    constructor Create(AOwner: TComponent); override;
     procedure Load(const New: TArray<TPrivilege>);
     procedure LoadEvery;
-    function Find(Luid: TPrivilegeId): Integer;
-    property Checked: TArray<TPrivilege> read ListChecked write LoadChecked;
+    procedure AdjustSelected(NewAttributes: TPrivilegeAttributes);
     property Selected: TArray<TPrivilege> read ListSelected;
-    property Privilege[Index: Integer]: TPrivilege read GetPrivilege;
-    procedure UpdateState(Index: Integer; Attributes: TPrivilegeAttributes);
+    property Checked: TArray<TPrivilege> read ListChecked write SetChecked;
   published
     property ColoringUnChecked: TPrivilegeColoring read FColoringUnChecked write FColoringUnChecked default pcStateBased;
     property ColoringChecked: TPrivilegeColoring read FCheckedColoring write FCheckedColoring default pcStateBased;
@@ -43,54 +64,15 @@ type
 implementation
 
 uses
-  Winapi.WinNt, Winapi.ntlsa, NtUtils.Lsa, DelphiUtils.Arrays,
-  DelphiUiLib.Strings, DelphiUiLib.Reflection.Strings,
-  DelphiUiLib.Reflection.Numeric, UI.Colors;
+  Ntapi.ntlsa, DelphiUiLib.Strings, DelphiUiLib.Reflection.Strings,
+  DelphiUiLib.Reflection.Numeric, UI.Colors, UI.Helper, VirtualTrees.Types;
 
 {$R *.dfm}
 
-{ TPrivilegeRecord }
-
-procedure TPrivilegeRecord.Load(Privilege: TPrivilege; hxPolicy: IHandle);
-var
-  RawName: String;
-begin
-  Data := Privilege;
-
-  // Try to query the name and the description from the system
-  if Assigned(hxPolicy) and LsaxQueryPrivilege(Privilege.Luid, RawName,
-    Description, hxPolicy).IsSuccess then
-    Name := PrettifyCamelCase(RawName, 'Se')
-  else
-  begin
-    // Otherwise, prepare names based on well-known privileges
-    Name := TNumeric.Represent(TSeWellKnownPrivilege(Privilege.Luid)).Text;
-    Description := '';
-  end;
-end;
-
-{ Functions }
-
-function GetPrivilegeGroupId(Value: TLuid): Integer;
-const
-  // Be consistent with ListView's groups
-  GROUP_ID_HIGH = 0;
-  GROUP_ID_MEDIUM = 1;
-  GROUP_ID_LOW = 2;
-var
-  Integrity: Cardinal;
-begin
-  Integrity := LsaxQueryIntegrityPrivilege(Value);
-
-  if Integrity > SECURITY_MANDATORY_MEDIUM_RID then
-    Result := GROUP_ID_HIGH
-  else if Integrity < SECURITY_MANDATORY_MEDIUM_RID then
-    Result := GROUP_ID_LOW
-  else
-    Result := GROUP_ID_MEDIUM;
-end;
-
 function GetAllPrivileges: TArray<TPrivilege>;
+const
+  SE_MIN_WELL_KNOWN_PRIVILEGE = Integer(SE_CREATE_TOKEN_PRIVILEGE);
+  SE_MAX_WELL_KNOWN_PRIVILEGE = Integer(High(TSeWellKnownPrivilege));
 var
   New: TArray<TPrivilegeDefinition>;
   i: Integer;
@@ -120,196 +102,190 @@ begin
         Attributes := SE_PRIVILEGE_ENABLED_BY_DEFAULT or SE_PRIVILEGE_ENABLED;
 end;
 
-{ TPrivilegesFrame }
+{ TPrivilegeNodeData }
 
-function TPrivilegesFrame.Find(Luid: TPrivilegeId): Integer;
-var
-  i: Integer;
+procedure TPrivilegeNodeData.Adjust;
 begin
-  for i := 0 to High(Privileges) do
-    if Privileges[i].Data.Luid = Luid then
-      Exit(i);
+  Privilege.Attributes := NewAttributes;
+  Cell[colState] := TNumeric.Represent(Privilege.Attributes).Text;
 
-  Result := -1;
+  SetColoringMode(ColoringMode);
+
+  if Assigned(TreeView) and Assigned(Node) then
+    TreeView.InvalidateNode(Node);
 end;
 
-function TPrivilegesFrame.GetPrivilege(Index: Integer): TPrivilege;
+constructor TPrivilegeNodeData.Create;
 begin
-  Result := Privileges[Index].Data;
-end;
+  inherited Create(colMax);
 
-function TPrivilegesFrame.ListChecked: TArray<TPrivilege>;
-begin
-  // Get all checked privileges
+  Self.Privilege := Privilege;
+  Cell[colValue] := IntToStr(Privilege.Luid);
+  Cell[colState] := TNumeric.Represent(Privilege.Attributes).Text;
+  Cell[colIntegrity] := TNumeric.Represent(
+    LsaxQueryIntegrityPrivilege(Privilege.Luid)).Text;
 
-  Result := TArray.ConvertEx<TPrivilegeRecord, TPrivilege>(Privileges,
-    function (const Index: Integer; const Entry: TPrivilegeRecord;
-      out ConvertedEntry: TPrivilege): Boolean
-    begin
-      Result := ListViewEx.Items[Index].Checked;
-
-      if Result then
-        ConvertedEntry := Entry.Data;
-    end
-  );
-end;
-
-function TPrivilegesFrame.ListSelected: TArray<TPrivilege>;
-begin
-  // Get all checked privileges
-
-  Result := TArray.ConvertEx<TPrivilegeRecord, TPrivilege>(Privileges,
-    function (const Index: Integer; const Entry: TPrivilegeRecord;
-      out ConvertedEntry: TPrivilege): Boolean
-    begin
-      Result := ListViewEx.Items[Index].Selected;
-
-      if Result then
-        ConvertedEntry := Entry.Data;
-    end
-  );
-end;
-
-procedure TPrivilegesFrame.ListViewExItemChecked(Sender: TObject;
-  Item: TListItem);
-begin
-  if FColoringUnChecked <> FCheckedColoring then
-    RecolorItem(Item as TListItemEx, Privileges[Item.Index].Data.Attributes);
-end;
-
-procedure TPrivilegesFrame.Load(const New: TArray<TPrivilege>);
-var
-  hxPolicy: IHandle;
-  i: Integer;
-  NewItem: TListItemEx;
-  HintSections: TArray<THintSection>;
-begin
-  with ListViewEx.Items do
+  // Try to query the name and the description from the system
+  if LsaxQueryPrivilege(Privilege.Luid, Cell[colName], Cell[colDescription],
+    hxPolicy).IsSuccess then
   begin
-    BeginUpdate(True);
-    Clear;
+    Cell[colFriendly] := PrettifyCamelCase(Cell[colName], 'Se');
 
-    // Prepare LSA policy handle for querying
-    if not LsaxOpenPolicy(hxPolicy, POLICY_LOOKUP_NAMES).IsSuccess then
-      hxPolicy := nil;
+    Hint := BuildHint([
+      THintSection.New('Friendly Name', Cell[colFriendly]),
+      THintSection.New('Description', Cell[colDescription]),
+      THintSection.New('Required Integrity', Cell[colIntegrity]),
+      THintSection.New('Value', Cell[colValue])
+    ]);
+  end
+  else
+  begin
+    // Otherwise, prepare names based on well-known privileges
+    Cell[colFriendly] := TNumeric.Represent(TSeWellKnownPrivilege(
+      Privilege.Luid)).Text;
+  end;
 
-    SetLength(Privileges, Length(New));
+  SetColoringMode(pcStateBased);
+end;
 
-    for i := 0 to High(Privileges) do
-    begin
-      // Copy the privilege and resolve its name
-      Privileges[i].Load(New[i], hxPolicy);
+class function TPrivilegeNodeData.CreateMany;
+var
+  hxPolicy: ILsaHandle;
+  i: Integer;
+begin
+  LsaxOpenPolicy(hxPolicy, POLICY_LOOKUP_NAMES);
+  SetLength(Result, Length(Privileges));
 
-      // Add an item and fill static columns
-      NewItem := Add;
-      NewItem.Cell[0] := Privileges[i].Name;
-      NewItem.Cell[2] := Privileges[i].Description;
-      NewItem.GroupID := GetPrivilegeGroupId(Privileges[i].Data.Luid);
+  for i := 0 to High(Privileges) do
+    Result[i] := Create(Privileges[i], hxPolicy);
+end;
 
-      // Make a hint
-      SetLength(HintSections, 3);
-      HintSections[0].Title := 'Name';
-      HintSections[0].Content := Privileges[i].Name;
-      HintSections[1].Title := 'Description';
-      HintSections[1].Content := Privileges[i].Description;
-      HintSections[2].Title := 'Value';
-      HintSections[2].Content := IntToStr(Privileges[i].Data.Luid);
-      NewItem.Hint := BuildHint(HintSections);
+function TPrivilegeNodeData.GetPrivilege;
+begin
+  Result := Privilege;
+end;
 
-      // Update the attributes column and color
-      ReloadState(NewItem, Privileges[i].Data.Attributes);
-    end;
+procedure TPrivilegeNodeData.SetColoringMode;
+begin
+  ColoringMode := Mode;
+  HasColor := Mode <> pcNone;
 
-    EndUpdate(True);
+  case Mode of
+    pcRemoved: Color := ColorSettings.clRemoved;
+    pcStateBased:
+      if BitTest(Privilege.Attributes and SE_PRIVILEGE_ENABLED) then
+        if BitTest(Privilege.Attributes and SE_PRIVILEGE_ENABLED_BY_DEFAULT) then
+          Color := ColorSettings.clEnabled
+        else
+          Color := ColorSettings.clEnabledModified
+      else
+        if BitTest(Privilege.Attributes and SE_PRIVILEGE_ENABLED_BY_DEFAULT) then
+          Color := ColorSettings.clDisabledModified
+        else
+          Color := ColorSettings.clDisabled;
+  end;
+
+  if Assigned(TreeView) and Assigned(Node) then
+    TreeView.InvalidateNode(Node);
+end;
+
+{ TFramePrivileges }
+
+procedure TFramePrivileges.AdjustSelected;
+var
+  Node: PVirtualNode;
+begin
+  BeginUpdateAuto(VST);
+
+  for Node in VST.SelectedNodes do
+    IPrivilege(Node.GetINodeData).Adjust(NewAttributes);
+end;
+
+constructor TFramePrivileges.Create;
+begin
+  inherited;
+  VST.UseINodeDataMode;
+end;
+
+function TFramePrivileges.ListChecked;
+begin
+  Result := TArray.Map<PVirtualNode, TPrivilege>(CollectNodes(VST.CheckedNodes),
+    NodeToPrivilege);
+end;
+
+function TFramePrivileges.ListSelected;
+begin
+  Result := TArray.Map<PVirtualNode, TPrivilege>(
+    CollectNodes(VST.SelectedNodes), NodeToPrivilege);
+end;
+
+procedure TFramePrivileges.Load;
+var
+  NodeData: IPrivilege;
+begin
+  BeginUpdateAuto(VST);
+  BackupSelectionAuto(VST, NodeComparer);
+
+  VST.RootNodeCount := 0;
+  for NodeData in TPrivilegeNodeData.CreateMany(New) do
+  begin
+    if toCheckSupport in VST.TreeOptions.MiscOptions then
+      NodeData.SetColoringMode(FColoringUnChecked);
+
+    VST.AddChild(VST.RootNode).SetINodeData(NodeData);
   end;
 end;
 
-procedure TPrivilegesFrame.LoadEvery;
+procedure TFramePrivileges.LoadEvery;
 begin
   Load(GetAllPrivileges);
 end;
 
-procedure TPrivilegesFrame.LoadChecked(Check: TArray<TPrivilege>);
+function TFramePrivileges.NodeComparer;
 var
-  i, Index: Integer;
+  Luid: TPrivilegeId;
 begin
-  ListViewEx.Items.BeginUpdate;
+  // We compare nodes via their LUIDs
+  Luid := IPrivilege(Node.GetINodeData).Privilege.Luid;
 
-  // Uncheck existing privileges
-  for i := 0 to Pred(ListViewEx.Items.Count) do
-    ListViewEx.Items[i].Checked := False;
-
-  // Try to locate overlay privileges
-  for i := 0 to High(Check) do
-  begin
-    Index := Find(Check[i].Luid);
-
-    // Check and update corresponding items
-    if Index >= 0 then
+  Result := function (const Node: PVirtualNode): Boolean
     begin
-      ListViewEx.Items[Index].Checked := True;
-      UpdateState(Index, Check[i].Attributes);
+      Result := IPrivilege(Node.GetINodeData).Privilege.Luid = Luid;
     end;
-  end;
-
-  ListViewEx.Items.EndUpdate;
 end;
 
-procedure TPrivilegesFrame.RecolorItem(Item: TListItemEx; Attributes:
-  TPrivilegeAttributes);
+function TFramePrivileges.NodeToPrivilege;
+begin
+  Result := IPrivilege(Node.GetINodeData).Privilege;
+end;
+
+procedure TFramePrivileges.SetChecked;
+var
+  Node: PVirtualNode;
+  Privilege: TPrivilege;
+begin
+  BeginUpdateAuto(VST);
+  VST.ClearChecked;
+
+  for Privilege in NewChecked do
+    for Node in VST.Nodes do
+      if IPrivilege(Node.GetINodeData).Privilege.Luid = Privilege.Luid then
+      begin
+        VST.CheckState[Node] := csCheckedNormal;
+        Break;
+      end;
+end;
+
+procedure TFramePrivileges.VSTChecked;
 var
   Mode: TPrivilegeColoring;
 begin
-  // Determine coloring mode
-  if ListViewEx.Checkboxes and Item.Checked then
+  if VST.CheckState[Node] = csCheckedNormal then
     Mode := FCheckedColoring
   else
     Mode := FColoringUnChecked;
 
-  // Apply it
-  case Mode of
-    pcNone:    Item.ColorEnabled := False;
-    pcRemoved: Item.Color := ColorSettings.clRemoved;
-    pcStateBased:
-      if Attributes and SE_PRIVILEGE_ENABLED <> 0 then
-        if Attributes and SE_PRIVILEGE_ENABLED_BY_DEFAULT <> 0 then
-          Item.Color := ColorSettings.clEnabled
-        else
-          Item.Color := ColorSettings.clEnabledModified
-      else
-        if Attributes and SE_PRIVILEGE_ENABLED_BY_DEFAULT <> 0 then
-          Item.Color := ColorSettings.clDisabledModified
-        else
-          Item.Color := ColorSettings.clDisabled;
-  end;
-end;
-
-procedure TPrivilegesFrame.ReloadState(Item: TListItemEx; Attributes:
-  TPrivilegeAttributes);
-begin
-  ListViewEx.Items.BeginUpdate;
-
-  // Fill-in the attributes
-  Item.Cell[1] := TNumeric.Represent(Attributes).Text;
-
-  // Update the color
-  RecolorItem(Item, Attributes);
-
-  ListViewEx.Items.EndUpdate;
-end;
-
-procedure TPrivilegesFrame.UpdateState(Index: Integer;
-  Attributes: TPrivilegeAttributes);
-begin
-  if Privileges[Index].Data.Attributes <> Attributes then
-  begin
-    ListViewEx.Items.BeginUpdate;
-
-    Privileges[Index].Data.Attributes := Attributes;
-    ReloadState(ListViewEx.Items[Index], Attributes);
-
-    ListViewEx.Items.EndUpdate;
-  end;
+  IPrivilege(Node.GetINodeData).SetColoringMode(Mode);
 end;
 
 end.
