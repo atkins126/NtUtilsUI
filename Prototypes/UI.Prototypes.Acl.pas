@@ -5,8 +5,8 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Classes,
   Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, VirtualTrees,
-  VirtualTreesEx, NtUtils.Security.Acl, NtUtils.Lsa.Sid, NtUtils,
-  Ntapi.WinNt;
+  DevirtualizedTree, DevirtualizedTree.Provider, NtUtils.Security.Acl,
+  NtUtils.Lsa.Sid, NtUtils, Ntapi.WinNt, VirtualTreesEx;
 
 const
   colPrincipal = 0;
@@ -17,12 +17,12 @@ const
   colMax = 5;
 
 type
-  IAceNode = interface (INodeData)
+  IAceNode = interface (INodeProvider)
     ['{FB3F8975-D27F-4413-A288-C8FCEA16E0EA}']
     function GetAce: TAceData;
   end;
 
-  TAceNodeData = class (TCustomNodeData, IAceNode, INodeData)
+  TAceNodeData = class (TCustomNodeProvider, IAceNode, INodeProvider)
     Ace: TAceData;
     Lookup: TTranslatedName;
     function GetAce: TAceData;
@@ -41,7 +41,7 @@ type
 
 type
   TFrameAcl = class(TFrame)
-    VST: TVirtualStringTreeEx;
+    VST: TDevirtualizedTree;
   public
     procedure Load(Acl: PAcl; MaskType: Pointer);
   end;
@@ -62,16 +62,16 @@ begin
 
   Lookup := LookupSrc;
   Ace := AceSrc;
-  Cell[colSid] := RtlxSidToString(Ace.Sid);
+  Cells[colSid] := RtlxSidToString(Ace.Sid);
 
   if Lookup.IsValid then
-    Cell[colPrincipal] := Lookup.FullName
+    Cells[colPrincipal] := Lookup.FullName
   else
-    Cell[colPrincipal] := Cell[colSid];
+    Cells[colPrincipal] := Cells[colSid];
 
-  Cell[colAccess] := FormatAccess(Ace.Mask, MaskType);
-  Cell[colFlags] := TNumeric.Represent(Ace.AceFlags).Text;
-  Cell[colAceType] := TNumeric.Represent(Ace.AceType).Text;
+  Cells[colAccess] := FormatAccess(Ace.Mask, MaskType);
+  Cells[colFlags] := TNumeric.Represent(Ace.AceFlags).Text;
+  Cells[colAceType] := TNumeric.Represent(Ace.AceType).Text;
 
   HasColor := True;
 
@@ -81,7 +81,6 @@ begin
     Color := ColorSettings.clDisabled
   else
     Color := ColorSettings.clIntegrity;
-
 end;
 
 class function TAceNodeData.CreateMany;
@@ -115,14 +114,13 @@ var
   Aces: TArray<TAceData>;
   Ace: IAceNode;
 begin
-  VST.UseINodeDataMode;
-  BeginUpdateAuto(VST);
+  VST.BeginUpdateAuto;
 
   if not RtlxDumpAcl(Acl, Aces).IsSuccess then
     Aces := nil;
 
   for Ace in TAceNodeData.CreateMany(Aces, MaskType) do
-    VST.AddChild(VST.RootNode).SetINodeData(Ace);
+    VST.AddChild(VST.RootNode).SetProvider(Ace);
 end;
 
 end.

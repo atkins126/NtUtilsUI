@@ -5,8 +5,8 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Classes,
   Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, VirtualTrees,
-  VirtualTreesEx, Ntapi.WinNt, Ntapi.ntseapi, NtUtils, NtUtils.Lsa,
-  DelphiUtils.Arrays;
+  DevirtualizedTree, DevirtualizedTree.Provider, Ntapi.WinNt, Ntapi.ntseapi,
+  NtUtils, NtUtils.Lsa, DelphiUtils.Arrays, VirtualTreesEx;
 
 const
   colFriendly = 0;
@@ -20,7 +20,7 @@ const
 type
   TPrivilegeColoring = (pcStateBased, pcRemoved, pcNone);
 
-  IPrivilege = interface (INodeData)
+  IPrivilege = interface (INodeProvider)
     ['{DC6BDFAD-2601-4402-933F-093C87406ED1}']
     function GetPrivilege: TPrivilege;
     procedure SetColoringMode(Mode: TPrivilegeColoring);
@@ -28,7 +28,7 @@ type
     procedure Adjust(NewAttributes: TPrivilegeAttributes);
   end;
 
-  TPrivilegeNodeData = class (TCustomNodeData, IPrivilege, INodeData)
+  TPrivilegeNodeData = class (TCustomNodeProvider, IPrivilege, INodeProvider)
     Privilege: TPrivilege;
     ColoringMode: TPrivilegeColoring;
     function GetPrivilege: TPrivilege;
@@ -40,7 +40,7 @@ type
   end;
 
   TFramePrivileges = class(TFrame)
-    VST: TVirtualStringTreeEx;
+    VST: TDevirtualizedTree;
     procedure VSTChecked(Sender: TBaseVirtualTree; Node: PVirtualNode);
   private
     FColoringUnChecked, FCheckedColoring: TPrivilegeColoring;
@@ -50,7 +50,6 @@ type
     function ListChecked: TArray<TPrivilege>;
     procedure SetChecked(const NewChecked: TArray<TPrivilege>);
   public
-    constructor Create(AOwner: TComponent); override;
     procedure Load(const New: TArray<TPrivilege>);
     procedure LoadEvery;
     procedure AdjustSelected(NewAttributes: TPrivilegeAttributes);
@@ -107,12 +106,10 @@ end;
 procedure TPrivilegeNodeData.Adjust;
 begin
   Privilege.Attributes := NewAttributes;
-  Cell[colState] := TNumeric.Represent(Privilege.Attributes).Text;
+  Cells[colState] := TNumeric.Represent(Privilege.Attributes).Text;
 
   SetColoringMode(ColoringMode);
-
-  if Assigned(TreeView) and Assigned(Node) then
-    TreeView.InvalidateNode(Node);
+  Invalidate;
 end;
 
 constructor TPrivilegeNodeData.Create;
@@ -120,28 +117,28 @@ begin
   inherited Create(colMax);
 
   Self.Privilege := Privilege;
-  Cell[colValue] := IntToStr(Privilege.Luid);
-  Cell[colState] := TNumeric.Represent(Privilege.Attributes).Text;
-  Cell[colIntegrity] := TNumeric.Represent(
+  Cells[colValue] := IntToStr(Privilege.Luid);
+  Cells[colState] := TNumeric.Represent(Privilege.Attributes).Text;
+  Cells[colIntegrity] := TNumeric.Represent(
     LsaxQueryIntegrityPrivilege(Privilege.Luid)).Text;
 
   // Try to query the name and the description from the system
-  if LsaxQueryPrivilege(Privilege.Luid, Cell[colName], Cell[colDescription],
+  if LsaxQueryPrivilege(Privilege.Luid, Cells[colName], Cells[colDescription],
     hxPolicy).IsSuccess then
   begin
-    Cell[colFriendly] := PrettifyCamelCase(Cell[colName], 'Se');
+    Cells[colFriendly] := PrettifyCamelCase(Cells[colName], 'Se');
 
     Hint := BuildHint([
-      THintSection.New('Friendly Name', Cell[colFriendly]),
-      THintSection.New('Description', Cell[colDescription]),
-      THintSection.New('Required Integrity', Cell[colIntegrity]),
-      THintSection.New('Value', Cell[colValue])
+      THintSection.New('Friendly Name', Cells[colFriendly]),
+      THintSection.New('Description', Cells[colDescription]),
+      THintSection.New('Required Integrity', Cells[colIntegrity]),
+      THintSection.New('Value', Cells[colValue])
     ]);
   end
   else
   begin
     // Otherwise, prepare names based on well-known privileges
-    Cell[colFriendly] := TNumeric.Represent(TSeWellKnownPrivilege(
+    Cells[colFriendly] := TNumeric.Represent(TSeWellKnownPrivilege(
       Privilege.Luid)).Text;
   end;
 
@@ -185,8 +182,7 @@ begin
           Color := ColorSettings.clDisabled;
   end;
 
-  if Assigned(TreeView) and Assigned(Node) then
-    TreeView.InvalidateNode(Node);
+  Invalidate;
 end;
 
 { TFramePrivileges }
@@ -195,36 +191,30 @@ procedure TFramePrivileges.AdjustSelected;
 var
   Node: PVirtualNode;
 begin
-  BeginUpdateAuto(VST);
+  VST.BeginUpdateAuto;
 
   for Node in VST.SelectedNodes do
-    IPrivilege(Node.GetINodeData).Adjust(NewAttributes);
-end;
-
-constructor TFramePrivileges.Create;
-begin
-  inherited;
-  VST.UseINodeDataMode;
+    IPrivilege(Node.GetProvider).Adjust(NewAttributes);
 end;
 
 function TFramePrivileges.ListChecked;
 begin
-  Result := TArray.Map<PVirtualNode, TPrivilege>(CollectNodes(VST.CheckedNodes),
+  Result := TArray.Map<PVirtualNode, TPrivilege>(VST.CheckedNodes.ToArray,
     NodeToPrivilege);
 end;
 
 function TFramePrivileges.ListSelected;
 begin
-  Result := TArray.Map<PVirtualNode, TPrivilege>(
-    CollectNodes(VST.SelectedNodes), NodeToPrivilege);
+  Result := TArray.Map<PVirtualNode, TPrivilege>(VST.SelectedNodes.ToArray,
+    NodeToPrivilege);
 end;
 
 procedure TFramePrivileges.Load;
 var
   NodeData: IPrivilege;
 begin
-  BeginUpdateAuto(VST);
-  BackupSelectionAuto(VST, NodeComparer);
+  VST.BeginUpdateAuto;
+  VST.BackupSelectionAuto(NodeComparer);
 
   VST.RootNodeCount := 0;
   for NodeData in TPrivilegeNodeData.CreateMany(New) do
@@ -232,7 +222,7 @@ begin
     if toCheckSupport in VST.TreeOptions.MiscOptions then
       NodeData.SetColoringMode(FColoringUnChecked);
 
-    VST.AddChild(VST.RootNode).SetINodeData(NodeData);
+    VST.AddChild(VST.RootNode).SetProvider(NodeData);
   end;
 end;
 
@@ -246,17 +236,17 @@ var
   Luid: TPrivilegeId;
 begin
   // We compare nodes via their LUIDs
-  Luid := IPrivilege(Node.GetINodeData).Privilege.Luid;
+  Luid := IPrivilege(Node.GetProvider).Privilege.Luid;
 
   Result := function (const Node: PVirtualNode): Boolean
     begin
-      Result := IPrivilege(Node.GetINodeData).Privilege.Luid = Luid;
+      Result := IPrivilege(Node.GetProvider).Privilege.Luid = Luid;
     end;
 end;
 
 function TFramePrivileges.NodeToPrivilege;
 begin
-  Result := IPrivilege(Node.GetINodeData).Privilege;
+  Result := IPrivilege(Node.GetProvider).Privilege;
 end;
 
 procedure TFramePrivileges.SetChecked;
@@ -264,12 +254,12 @@ var
   Node: PVirtualNode;
   Privilege: TPrivilege;
 begin
-  BeginUpdateAuto(VST);
+  VST.BeginUpdateAuto;
   VST.ClearChecked;
 
   for Privilege in NewChecked do
     for Node in VST.Nodes do
-      if IPrivilege(Node.GetINodeData).Privilege.Luid = Privilege.Luid then
+      if IPrivilege(Node.GetProvider).Privilege.Luid = Privilege.Luid then
       begin
         VST.CheckState[Node] := csCheckedNormal;
         Break;
@@ -285,7 +275,7 @@ begin
   else
     Mode := FColoringUnChecked;
 
-  IPrivilege(Node.GetINodeData).SetColoringMode(Mode);
+  IPrivilege(Node.GetProvider).SetColoringMode(Mode);
 end;
 
 end.

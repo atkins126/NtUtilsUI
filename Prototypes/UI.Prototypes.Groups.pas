@@ -6,7 +6,8 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Classes,
   Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, VirtualTrees,
   VirtualTrees.Types, UI.Helper, NtUtils, NtUtils.Lsa.Sid, Vcl.Menus,
-  DelphiUtils.Events, DelphiUtils.Arrays, Ntapi.ntseapi, VirtualTreesEx;
+  DelphiUtils.Arrays, Ntapi.ntseapi, DevirtualizedTree,
+  DevirtualizedTree.Provider, VirtualTreesEx;
 
 const
   colFriendly = 0;
@@ -25,27 +26,29 @@ type
     var AttributesToSet: TGroupAttributes
   );
 
-  IGroup = interface (INodeData)
+  IGroup = interface (INodeProvider)
     ['{1D70B85E-99E9-4F21-B298-8928AD2DBDAE}']
     function GetGroup: TGroup;
     function GetLookup: TTranslatedName;
     function Matches(const Sid: ISid): Boolean;
   end;
 
-  TGroupNodeData = class (TCustomNodeData, IGroup, INodeData)
+  TGroupNodeData = class (TCustomNodeProvider, IGroup, INodeProvider)
     Group: TGroup;
     Lookup: TTranslatedName;
     constructor Create(const Src: TGroup; const LookupSrc: TTranslatedName);
-    class function CreateMany(Src: TArray<TGroup>): TArray<INodeData>; static;
+    class function CreateMany(Src: TArray<TGroup>): TArray<INodeProvider>; static;
     function GetGroup: TGroup;
     function GetLookup: TTranslatedName;
     function Matches(const Sid: ISid): Boolean;
   end;
 
+  TDefaultAction = procedure(const Group: TGroup) of object;
+
   TFrameGroups = class(TFrame)
-    VST: TVirtualStringTreeEx;
+    VST: TDevirtualizedTree;
   private
-    FDefaultAction: TEventListener<TGroup>;
+    FDefaultAction: TDefaultAction;
     function GetAllGroups: TArray<TGroup>;
     function GetChecked: TArray<TGroup>;
     function GetIsChecked(const Group: TGroup): Boolean;
@@ -66,7 +69,7 @@ type
     property IsChecked[const Group: TGroup]: Boolean read GetIsChecked write SetIsChecked;
     constructor Create(AOwner: TComponent); override;
   published
-    property OnDefaultAction: TEventListener<TGroup> read FDefaultAction write FDefaultAction;
+    property OnDefaultAction: TDefaultAction read FDefaultAction write FDefaultAction;
   end;
 
 implementation
@@ -89,21 +92,21 @@ begin
 
   Group := Src;
   Lookup := LookupSrc;
-  Cell[colSid] := RtlxSidToString(Group.Sid);
+  Cells[colSid] := RtlxSidToString(Group.Sid);
 
   if Lookup.SidType <> SidTypeUndefined then
-    Cell[colSidType] := TNumeric.Represent(Lookup.SidType).Text;
+    Cells[colSidType] := TNumeric.Represent(Lookup.SidType).Text;
 
   if Lookup.IsValid then
-    Cell[colFriendly] := Lookup.FullName
+    Cells[colFriendly] := Lookup.FullName
   else
-    Cell[colFriendly] := Cell[colSid];
+    Cells[colFriendly] := Cells[colSid];
 
-  Cell[colFlags] := TNumeric.Represent<TGroupAttributes>(Group.Attributes and
+  Cells[colFlags] := TNumeric.Represent<TGroupAttributes>(Group.Attributes and
     not SE_GROUP_STATE_MASK, [Auto.From(IgnoreSubEnumsAttribute.Create).Data]
   ).Text;
 
-  Cell[colState] := TNumeric.Represent<TGroupAttributes>(Group.Attributes and
+  Cells[colState] := TNumeric.Represent<TGroupAttributes>(Group.Attributes and
     SE_GROUP_STATE_MASK).Text;
 
   // Colors
@@ -128,11 +131,11 @@ begin
 
   // Hint
   HintSections := [
-    THintSection.New('Friendly Name', Cell[colFriendly]),
-    THintSection.New('SID', Cell[colSid]),
-    THintSection.New('Type', Cell[colSidType]),
-    THintSection.New('State', Cell[colState]),
-    THintSection.New('Flags', Cell[colFlags])
+    THintSection.New('Friendly Name', Cells[colFriendly]),
+    THintSection.New('SID', Cells[colSid]),
+    THintSection.New('Type', Cells[colSidType]),
+    THintSection.New('State', Cells[colState]),
+    THintSection.New('Flags', Cells[colFlags])
   ];
 
   // Show SID type only for successful lookups
@@ -184,25 +187,24 @@ end;
 
 procedure TFrameGroups.Add;
 var
-  NewData: INodeData;
+  NewData: INodeProvider;
 begin
-  BeginUpdateAuto(VST);
+  VST.BeginUpdateAuto;
 
   for NewData in TGroupNodeData.CreateMany(Groups) do
-    VST.AddChild(VST.RootNode).SetINodeData(NewData);
+    VST.AddChild(VST.RootNode, NewData);
 end;
 
 constructor TFrameGroups.Create;
 begin
   inherited Create(AOwner);
-  VST.UseINodeDataMode;
   VST.OnInspectNode := DoDefaultAction;
 end;
 
 procedure TFrameGroups.DoDefaultAction;
 begin
   if Assigned(FDefaultAction) then
-    FDefaultAction(IGroup(Node.GetINodeData).GetGroup);
+    FDefaultAction(IGroup(Node.GetProvider).GetGroup);
 end;
 
 procedure TFrameGroups.EditSelectedGroup;
@@ -214,20 +216,20 @@ begin
   if VST.SelectedCount <> 1 then
     Exit;
 
-  BeginUpdateAuto(VST);
+  VST.BeginUpdateAuto;
 
   for Node in VST.SelectedNodes do
   begin
-    NewGroup := IGroup(Node.GetINodeData).GetGroup;
+    NewGroup := IGroup(Node.GetProvider).GetGroup;
     Callback(NewGroup);
 
     // Reuse previous lookup if the SID haven't changed
-    if IGroup(Node.GetINodeData).Matches(NewGroup.Sid) then
-      Lookup := IGroup(Node.GetINodeData).GetLookup
+    if IGroup(Node.GetProvider).Matches(NewGroup.Sid) then
+      Lookup := IGroup(Node.GetProvider).GetLookup
     else if not LsaxLookupSid(NewGroup.Sid, Lookup).IsSuccess then
       Lookup := Default(TTranslatedName);
 
-    Node.SetINodeData(TGroupNodeData.Create(NewGroup, Lookup));
+    Node.SetProvider(TGroupNodeData.Create(NewGroup, Lookup));
     VST.InvalidateNode(Node);
     Break;
   end;
@@ -247,17 +249,17 @@ begin
   AttributesToSet := 0;
   Callback(Selected, AttributesToClear, AttributesToSet);
 
-  BeginUpdateAuto(VST);
+  VST.BeginUpdateAuto;
 
   for Node in VST.SelectedNodes do
   begin
-    NewGroup := IGroup(Node.GetINodeData).GetGroup;
+    NewGroup := IGroup(Node.GetProvider).GetGroup;
     NewGroup.Attributes := (NewGroup.Attributes and not AttributesToClear)
       or AttributesToSet;
 
     // Reuse SID lookup
-    Node.SetINodeData(TGroupNodeData.Create(NewGroup,
-      IGroup(Node.GetINodeData).GetLookup));
+    Node.SetProvider(TGroupNodeData.Create(NewGroup,
+      IGroup(Node.GetProvider).GetLookup));
 
     VST.InvalidateNode(Node);
   end;
@@ -265,13 +267,13 @@ end;
 
 function TFrameGroups.GetAllGroups: TArray<TGroup>;
 begin
-  Result := TArray.Map<PVirtualNode, TGroup>(CollectNodes(VST.Nodes),
+  Result := TArray.Map<PVirtualNode, TGroup>(VST.Nodes.ToArray,
     NodeToGroup);
 end;
 
 function TFrameGroups.GetChecked;
 begin
-  Result := TArray.Map<PVirtualNode, TGroup>(CollectNodes(VST.CheckedNodes),
+  Result := TArray.Map<PVirtualNode, TGroup>(VST.CheckedNodes.ToArray,
     NodeToGroup);
 end;
 
@@ -280,7 +282,7 @@ var
   Node: PVirtualNode;
 begin
   for Node in VST.Nodes do
-    if IGroup(Node.GetINodeData).Matches(Group.Sid) then
+    if IGroup(Node.GetProvider).Matches(Group.Sid) then
       Exit(VST.CheckState[Node] = csCheckedNormal);
 
   Result := False;
@@ -288,14 +290,14 @@ end;
 
 function TFrameGroups.GetSelected;
 begin
-  Result := TArray.Map<PVirtualNode, TGroup>(CollectNodes(VST.SelectedNodes),
+  Result := TArray.Map<PVirtualNode, TGroup>(VST.SelectedNodes.ToArray,
     NodeToGroup);
 end;
 
 procedure TFrameGroups.Load;
 begin
-  BeginUpdateAuto(VST);
-  BackupSelectionAuto(VST, NodeComparer);
+  VST.BeginUpdateAuto;
+  VST.BackupSelectionAuto(NodeComparer);
   VST.RootNodeCount := 0;
   Add(Groups);
 end;
@@ -305,17 +307,17 @@ var
   Sid: ISid;
 begin
   // We compare nodes via their SIDs
-  Sid := IGroup(Node.GetINodeData).GetGroup.Sid;
+  Sid := IGroup(Node.GetProvider).GetGroup.Sid;
 
   Result := function (const Node: PVirtualNode): Boolean
     begin
-      Result := IGroup(Node.GetINodeData).Matches(Sid);
+      Result := IGroup(Node.GetProvider).Matches(Sid);
     end;
 end;
 
 function TFrameGroups.NodeToGroup;
 begin
-  Result := IGroup(Node.GetINodeData).GetGroup;
+  Result := IGroup(Node.GetProvider).GetGroup;
 end;
 
 procedure TFrameGroups.SetChecked;
@@ -329,7 +331,7 @@ begin
     NeedToCheck := False;
 
     for i := 0 to High(Value) do
-      if IGroup(Node.GetINodeData).Matches(Value[i].Sid) then
+      if IGroup(Node.GetProvider).Matches(Value[i].Sid) then
       begin
         NeedToCheck := True;
         Break;
@@ -347,7 +349,7 @@ var
   Node: PVirtualNode;
 begin
   for Node in VST.Nodes do
-    if IGroup(Node.GetINodeData).Matches(Group.Sid) then
+    if IGroup(Node.GetProvider).Matches(Group.Sid) then
     begin
       if Value then
         VST.CheckState[Node] := csCheckedNormal
