@@ -17,13 +17,19 @@ type
     function ToArray: TArray<PVirtualNode>;
   end;
 
+  TPopupMode = (pmOnItemsOnly, pmAnywhere);
+
   TVirtualStringTreeEx = class(TVirtualStringTree)
   private
     FDefaultMenus: TDefaultTreeMenu;
-    FNodePopupMenu: TPopupMenu;
-    procedure SetNodePopupMenu(const Value: TPopupMenu);
+    FPopupMenuEx: TPopupMenu;
+    FPopupMode: TPopupMode;
+    FNoItemsText: String;
+    FNoItemsTextLines: TArray<String>;
+    procedure SetPopupMenuEx(const Value: TPopupMenu);
     function GetOnInspectNode: TNodeEvent;
     procedure SetOnInspectNode(const Value: TNodeEvent);
+    procedure SetNoItemsText(const Value: String);
   protected
     function DoCompare(Node1, Node2: PVirtualNode; Column: TColumnIndex): Integer; override;
     function DoGetPopupMenu(Node: PVirtualNode; Column: TColumnIndex; Position: TPoint): TPopupMenu; override;
@@ -31,9 +37,12 @@ type
     procedure DoRemoveFromSelection(Node: PVirtualNode); override;
     procedure DblClick; override;
     procedure KeyDown(var Key: Word; Shift: TShiftState); override;
+    procedure DoAfterPaint(Canvas: TCanvas); override;
   public
     function OverrideInspectMenuEnabled(Node: PVirtualNode): Boolean; virtual;
     constructor Create(AOwner: TComponent); override;
+    procedure DeleteSelectedNodesEx(SelectSomethingAfter: Boolean = True);
+    procedure SelectSometing;
     destructor Destroy; override;
   published
     property DrawSelectionMode default smBlendedRectangle;
@@ -41,7 +50,9 @@ type
     property IncrementalSearch default isAll;
     property SelectionBlendFactor default 64;
     property OnInspectNode: TNodeEvent read GetOnInspectNode write SetOnInspectNode;
-    property NodePopupMenu: TPopupMenu read FNodePopupMenu write SetNodePopupMenu;
+    property PopupMenuEx: TPopupMenu read FPopupMenuEx write SetPopupMenuEx;
+    property PopupMode: TPopupMode read FPopupMode write FPopupMode default pmOnItemsOnly;
+    property NoItemsText: String read FNoItemsText write SetNoItemsText;
   end;
 
 procedure Register;
@@ -119,10 +130,94 @@ begin
   FDefaultMenus.InvokeInspect;
 end;
 
+procedure TVirtualStringTreeEx.DeleteSelectedNodesEx;
+var
+  SelectionLookupStart: PVirtualNode;
+  SelectionCandidate: PVirtualNode;
+begin
+  if SelectedCount <= 0 then
+    Exit;
+
+  try
+    BeginUpdate;
+    SelectionCandidate := nil;
+
+    if SelectSomethingAfter then
+    begin
+      // We want the future selection to be in the same area of the tree
+      if Assigned(FocusedNode) then
+        SelectionLookupStart := FocusedNode
+      else
+        SelectionLookupStart := GetFirstSelected(True);
+
+      // Choose an item below for future selection
+      SelectionCandidate := SelectionLookupStart;
+      while Assigned(SelectionCandidate) and Selected[SelectionCandidate] do
+        SelectionCandidate := GetNextVisible(SelectionCandidate, True);
+
+      // No items below are suitable; try items above
+      if not Assigned(SelectionCandidate) then
+      begin
+        SelectionCandidate := SelectionLookupStart;
+        while Assigned(SelectionCandidate) and Selected[SelectionCandidate] do
+           SelectionCandidate := GetPreviousVisible(SelectionCandidate, True);
+      end;
+    end;
+
+    // Perform deletion
+    DeleteSelectedNodes;
+
+    // Select and focus the candidate
+    if Assigned(SelectionCandidate) then
+    begin
+      FocusedNode := SelectionCandidate;
+      Selected[SelectionCandidate] := True;
+    end;
+  finally
+    EndUpdate;
+  end;
+end;
+
 destructor TVirtualStringTreeEx.Destroy;
 begin
   FDefaultMenus.Free;
   inherited;
+end;
+
+procedure TVirtualStringTreeEx.DoAfterPaint;
+var
+  Sizes: TArray<TSize>;
+  TotalHeight, Offset: Integer;
+  i: Integer;
+begin
+  if (VisibleCount = 0) and (Length(FNoItemsTextLines) > 0) then
+  begin
+    Canvas.Font.Color := clGrayText;
+
+    // Compute the sizes of each line
+    SetLength(Sizes, Length(FNoItemsTextLines));
+    TotalHeight := 0;
+
+    for i := 0 to High(FNoItemsTextLines) do
+    begin
+      Sizes[i] := Canvas.TextExtent(FNoItemsTextLines[i]);
+      Inc(TotalHeight, Sizes[i].Height);
+    end;
+
+    Offset := 0;
+
+    // Draw the static text in the middle of an empty tree
+    for i := 0 to High(FNoItemsTextLines) do
+    begin
+      Canvas.TextOut(
+        (ClientWidth - Sizes[i].Width) div 2,
+        (ClientHeight - Sizes[i].Height - TotalHeight) div 2 + Offset,
+        FNoItemsTextLines[i]);
+      Inc(Offset, Sizes[i].Height);
+    end;
+  end;
+
+  inherited DoAfterPaint(Canvas);
 end;
 
 function TVirtualStringTreeEx.DoCompare;
@@ -138,13 +233,16 @@ function TVirtualStringTreeEx.DoGetPopupMenu;
 begin
   Result := inherited DoGetPopupMenu(Node, Column, Position);
 
-  if Header.InHeader(Position) or (SelectedCount = 0) then
+  if Header.InHeader(Position) then
+    Exit;
+
+  if (FPopupMode = pmOnItemsOnly) and (SelectedCount = 0) then
     Exit;
 
   // Choose a context menu
   if not Assigned(Result) then
-    if Assigned(FNodePopupMenu) then
-      Result := FNodePopupMenu
+    if Assigned(FPopupMenuEx) then
+      Result := FPopupMenuEx
     else
       Result := FDefaultMenus.FallbackMenu;
 
@@ -187,20 +285,43 @@ begin
   Result := True;
 end;
 
-procedure TVirtualStringTreeEx.SetNodePopupMenu;
+procedure TVirtualStringTreeEx.SelectSometing;
+var
+  Node: PVirtualNode;
 begin
-  FNodePopupMenu := Value;
-
-  if csDesigning in ComponentState then
+  if SelectedCount > 0 then
     Exit;
 
-  // Note: attaching to nil moves items back to the fallback menu
-  FDefaultMenus.AttachItemsTo(FNodePopupMenu);
+  Node := GetFirstVisible;
+
+  if Assigned(Node) then
+  begin
+    FocusedNode := Node;
+    Selected[Node] := True;
+  end;
+end;
+
+procedure TVirtualStringTreeEx.SetNoItemsText;
+begin
+  FNoItemsText := Value;
+  FNoItemsTextLines := FNoItemsText.Split([#$D#$A]);
+  Invalidate;
 end;
 
 procedure TVirtualStringTreeEx.SetOnInspectNode;
 begin
   FDefaultMenus.OnInspect := Value;
+end;
+
+procedure TVirtualStringTreeEx.SetPopupMenuEx;
+begin
+  FPopupMenuEx := Value;
+
+  if csDesigning in ComponentState then
+    Exit;
+
+  // Note: attaching to nil moves items back to the fallback menu
+  FDefaultMenus.AttachItemsTo(FPopupMenuEx);
 end;
 
 end.

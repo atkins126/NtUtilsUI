@@ -44,7 +44,10 @@ type
     procedure VSTChecked(Sender: TBaseVirtualTree; Node: PVirtualNode);
   private
     FColoringUnChecked, FCheckedColoring: TPrivilegeColoring;
-    function NodeToPrivilege(const Node: PVirtualNode): TPrivilege;
+    function NodeToPrivilege(
+      const Node: PVirtualNode;
+      out Privilege: TPrivilege
+    ): Boolean;
     function NodeComparer(const Node: PVirtualNode): TCondition<PVirtualNode>;
     function ListSelected: TArray<TPrivilege>;
     function ListChecked: TArray<TPrivilege>;
@@ -60,6 +63,11 @@ type
     property ColoringChecked: TPrivilegeColoring read FCheckedColoring write FCheckedColoring default pcStateBased;
   end;
 
+// Helper converter
+function PrivilegesToIDs(
+  const Privileges: TArray<TPrivilege>
+): TArray<TPrivilegeId>;
+
 implementation
 
 uses
@@ -67,6 +75,16 @@ uses
   DelphiUiLib.Reflection.Numeric, UI.Colors, UI.Helper, VirtualTrees.Types;
 
 {$R *.dfm}
+
+function PrivilegesToIDs;
+var
+  i: Integer;
+begin
+  SetLength(Result, Length(Privileges));
+
+  for i := 0 to High(Privileges) do
+    Result[i] := Privileges[i].Luid;
+end;
 
 function GetAllPrivileges: TArray<TPrivilege>;
 const
@@ -190,22 +208,24 @@ end;
 procedure TFramePrivileges.AdjustSelected;
 var
   Node: PVirtualNode;
+  Provider: IPrivilege;
 begin
   VST.BeginUpdateAuto;
 
   for Node in VST.SelectedNodes do
-    IPrivilege(Node.GetProvider).Adjust(NewAttributes);
+    if Node.TryGetProvider(IPrivilege, Provider) then
+      Provider.Adjust(NewAttributes);
 end;
 
 function TFramePrivileges.ListChecked;
 begin
-  Result := TArray.Map<PVirtualNode, TPrivilege>(VST.CheckedNodes.ToArray,
+  Result := TArray.Convert<PVirtualNode, TPrivilege>(VST.CheckedNodes.ToArray,
     NodeToPrivilege);
 end;
 
 function TFramePrivileges.ListSelected;
 begin
-  Result := TArray.Map<PVirtualNode, TPrivilege>(VST.SelectedNodes.ToArray,
+  Result := TArray.Convert<PVirtualNode, TPrivilege>(VST.SelectedNodes.ToArray,
     NodeToPrivilege);
 end;
 
@@ -222,7 +242,7 @@ begin
     if toCheckSupport in VST.TreeOptions.MiscOptions then
       NodeData.SetColoringMode(FColoringUnChecked);
 
-    VST.AddChild(VST.RootNode).SetProvider(NodeData);
+    VST.AddChild(VST.RootNode).Provider := NodeData;
   end;
 end;
 
@@ -233,25 +253,40 @@ end;
 
 function TFramePrivileges.NodeComparer;
 var
+  Provider: IPrivilege;
   Luid: TPrivilegeId;
 begin
-  // We compare nodes via their LUIDs
-  Luid := IPrivilege(Node.GetProvider).Privilege.Luid;
+  if Node.TryGetProvider(IPrivilege, Provider) then
+  begin
+    // We compare nodes via their LUIDs
+    Luid := Provider.Privilege.Luid;
 
-  Result := function (const Node: PVirtualNode): Boolean
+    Result := function (const Node: PVirtualNode): Boolean
+    var
+      Provider: IPrivilege;
     begin
-      Result := IPrivilege(Node.GetProvider).Privilege.Luid = Luid;
+      Result := Node.TryGetProvider(IPrivilege, Provider) and
+        (Provider.Privilege.Luid = Luid);
     end;
+  end
+  else
+    Result := nil;
 end;
 
 function TFramePrivileges.NodeToPrivilege;
+var
+  Provider: IPrivilege;
 begin
-  Result := IPrivilege(Node.GetProvider).Privilege;
+  Result := Node.TryGetProvider(IPrivilege, Provider);
+
+  if Result then
+    Privilege := Provider.Privilege;
 end;
 
 procedure TFramePrivileges.SetChecked;
 var
   Node: PVirtualNode;
+  Provider: IPrivilege;
   Privilege: TPrivilege;
 begin
   VST.BeginUpdateAuto;
@@ -259,7 +294,8 @@ begin
 
   for Privilege in NewChecked do
     for Node in VST.Nodes do
-      if IPrivilege(Node.GetProvider).Privilege.Luid = Privilege.Luid then
+      if Node.TryGetProvider(IPrivilege, Provider) and
+        (Provider.Privilege.Luid = Privilege.Luid) then
       begin
         VST.CheckState[Node] := csCheckedNormal;
         Break;
@@ -268,6 +304,7 @@ end;
 
 procedure TFramePrivileges.VSTChecked;
 var
+  Provider: IPrivilege;
   Mode: TPrivilegeColoring;
 begin
   if VST.CheckState[Node] = csCheckedNormal then
@@ -275,7 +312,8 @@ begin
   else
     Mode := FColoringUnChecked;
 
-  IPrivilege(Node.GetProvider).SetColoringMode(Mode);
+  if Node.TryGetProvider(IPrivilege, Provider) then
+    Provider.SetColoringMode(Mode);
 end;
 
 end.

@@ -8,6 +8,10 @@ uses
 
 
 type
+  TCollectionHelper = class helper for TCollection
+    function BeginUpdateAuto: IAutoReleasable;
+  end;
+
   // Automatic operations on virtual tree views
   TVirtualTreeAutoHelper = class helper for TBaseVirtualTree
     function BeginUpdateAuto: IAutoReleasable;
@@ -31,6 +35,20 @@ type
 
 implementation
 
+{ TCollectionHelper }
+
+function TCollectionHelper.BeginUpdateAuto;
+begin
+  BeginUpdate;
+
+  Result := Auto.Delay(
+    procedure
+    begin
+      EndUpdate;
+    end
+  );
+end;
+
 { TVirtualTreeAutoHelper }
 
 function TVirtualTreeAutoHelper.BackupSelectionAuto;
@@ -52,7 +70,7 @@ begin
   Result := Auto.Delay(
     procedure
     var
-      i: Integer;
+      SelectionCondition: TCondition<PVirtualNode>;
       Node: PVirtualNode;
     begin
       BeginUpdateAuto;
@@ -60,8 +78,8 @@ begin
       // Check if each new node matches any conditions for selection
       for Node in Nodes do
       begin
-        for i := 0 to High(SelectionConditions) do
-          if SelectionConditions[i](Node) then
+        for SelectionCondition in SelectionConditions do
+          if Assigned(SelectionCondition) and SelectionCondition(Node) then
           begin
             Selected[Node] := True;
             Break;
