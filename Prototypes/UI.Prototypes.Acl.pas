@@ -20,9 +20,28 @@ type
   IAceNode = interface (INodeProvider)
     ['{FB3F8975-D27F-4413-A288-C8FCEA16E0EA}']
     function GetAce: TAceData;
+    property Ace: TAceData read GetAce;
   end;
 
-  TAceNodeData = class (TCustomNodeProvider, IAceNode, INodeProvider)
+type
+  TFrameAcl = class(TFrame)
+    VST: TDevirtualizedTree;
+  public
+    procedure Load(const Acl: IAcl; MaskType: Pointer);
+  end;
+
+implementation
+
+uses
+  NtUtils.Security.Sid, DelphiUiLib.Reflection.Numeric,
+  NtUiLib.Reflection.AccessMasks, UI.Colors, UI.Helper;
+
+{$R *.dfm}
+
+{ TAceNodeData }
+
+type
+  TAceNodeData = class (TNodeProvider, IAceNode, INodeProvider)
     Ace: TAceData;
     Lookup: TTranslatedName;
     function GetAce: TAceData;
@@ -39,48 +58,31 @@ type
     ): TArray<IAceNode>;
   end;
 
-type
-  TFrameAcl = class(TFrame)
-    VST: TDevirtualizedTree;
-  public
-    procedure Load(Acl: PAcl; MaskType: Pointer);
-  end;
-
-implementation
-
-uses
-  NtUtils.Security.Sid, DelphiUiLib.Reflection.Numeric,
-  NtUiLib.Reflection.AccessMasks, UI.Colors, UI.Helper;
-
-{$R *.dfm}
-
-{ TAceNodeData }
-
 constructor TAceNodeData.Create;
 begin
   inherited Create(colMax);
 
   Lookup := LookupSrc;
   Ace := AceSrc;
-  Cells[colSid] := RtlxSidToString(Ace.Sid);
+  FColumnText[colSid] := RtlxSidToString(Ace.Sid);
 
   if Lookup.IsValid then
-    Cells[colPrincipal] := Lookup.FullName
+    FColumnText[colPrincipal] := Lookup.FullName
   else
-    Cells[colPrincipal] := Cells[colSid];
+    FColumnText[colPrincipal] := FColumnText[colSid];
 
-  Cells[colAccess] := FormatAccess(Ace.Mask, MaskType);
-  Cells[colFlags] := TNumeric.Represent(Ace.AceFlags).Text;
-  Cells[colAceType] := TNumeric.Represent(Ace.AceType).Text;
+  FColumnText[colAccess] := FormatAccess(Ace.Mask, MaskType);
+  FColumnText[colFlags] := TNumeric.Represent(Ace.AceFlags).Text;
+  FColumnText[colAceType] := TNumeric.Represent(Ace.AceType).Text;
 
-  HasColor := True;
+  FHasColor := True;
 
   if Ace.AceType in AccessAllowedAces then
-    Color := ColorSettings.clEnabled
+    FColor := ColorSettings.clEnabled
   else if Ace.AceType in AccessDeniedAces then
-    Color := ColorSettings.clDisabled
+    FColor := ColorSettings.clDisabled
   else
-    Color := ColorSettings.clIntegrity;
+    FColor := ColorSettings.clIntegrity;
 end;
 
 class function TAceNodeData.CreateMany;

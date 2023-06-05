@@ -11,52 +11,43 @@ uses
   VirtualTrees, VirtualTreesEx, Vcl.Graphics, System.Classes, System.Types;
 
 type
-  INodeProvider = interface
-    ['{714EBDFA-74FD-4549-927D-E605E277E5A5}']
-    procedure Invalidate;
-    procedure Attach(Node: PVirtualNode);
+  PVirtualNode = VirtualTrees.PVirtualNode;
 
-    // Property providers
+  INodeProvider = interface
+    ['{73CD9263-15D9-470E-937A-1EFDBBF60AF4}']
+    procedure Attach(Node: PVirtualNode);
+    procedure Detach;
+    procedure Initialize;
+    procedure Invalidate;
+    procedure NotifyChecked;
+    procedure NotifySelected;
+    procedure NotifyExpanding(var HasChildren: Boolean);
+    procedure NotifyCollapsing(var HasChildren: Boolean);
+    function MatchesSearch(const Query: String; Column: TColumnIndex): Boolean;
+
     function GetTree: TBaseVirtualTree;
     function GetNode: PVirtualNode;
-    function GetColumn(Index: Integer): String;
-    procedure SetColumn(Index: Integer; const Value: String);
+    function GetColumnText(Index: Integer): String;
     function GetHint: String;
-    procedure SetHint(const Value: String);
     function GetColor: TColor;
-    procedure SetColor(Value: TColor);
     function GetHasColor: Boolean;
     function GetFontColor: TColor;
-    procedure SetFontColor(Value: TColor);
     function GetHasFontColor: Boolean;
     function GetFontStyle: TFontStyles;
-    procedure SetFontStyle(Value: TFontStyles);
     function GetHasFontStyle: Boolean;
     function GetEnabledInspectMenu: Boolean;
-    procedure SetEnabledInspectMenu(Value: Boolean);
-    function GetOnChecked: TVTChangeEvent;
-    procedure SetOnChecked(Value: TVTChangeEvent);
-    function GetOnSelected: TVTChangeEvent;
-    procedure SetOnSelected(Value: TVTChangeEvent);
 
     property Tree: TBaseVirtualTree read GetTree;
     property Node: PVirtualNode read GetNode;
-    property Column[Index: Integer]: String read GetColumn write SetColumn;
-    property Hint: String read GetHint write SetHint;
-    property Color: TColor read GetColor write SetColor;
+    property ColumnText[Index: Integer]: String read GetColumnText;
+    property Hint: String read GetHint;
+    property Color: TColor read GetColor;
     property HasColor: Boolean read GetHasColor;
-    procedure ResetColor;
-    property FontColor: TColor read GetFontColor write SetFontColor;
+    property FontColor: TColor read GetFontColor;
     property HasFontColor: Boolean read GetHasFontColor;
-    procedure ResetFontColor;
-    property FontStyle: TFontStyles read GetFontStyle write SetFontStyle;
+    property FontStyle: TFontStyles read GetFontStyle;
     property HasFontStyle: Boolean read GetHasFontStyle;
-    procedure ResetFontStyle;
-    property EnabledInspectMenu: Boolean read GetEnabledInspectMenu write SetEnabledInspectMenu;
-    property OnChecked: TVTChangeEvent read GetOnChecked write SetOnChecked;
-    procedure NotifyChecked;
-    property OnSelected: TVTChangeEvent read GetOnSelected write SetOnSelected;
-    procedure NotifySelected;
+    property EnabledInspectMenu: Boolean read GetEnabledInspectMenu;
   end;
 
   TVirtualNodeHelper = record helper for TVirtualNode
@@ -81,10 +72,14 @@ type
     procedure DoChange(Node: PVirtualNode); override;
     procedure DoRemoveFromSelection(Node: PVirtualNode); override;
     procedure ValidateNodeDataSize(var Size: Integer); override;
+    function DoExpanding(Node: PVirtualNode): Boolean; override;
+    function DoCollapsing(Node: PVirtualNode): Boolean; override;
+    procedure DoFreeNode(Node: PVirtualNode); override;
+    procedure DoInitNode(Parent, Node: PVirtualNode; var InitStates: TVirtualNodeInitStates); override;
   public
     function OverrideInspectMenuEnabled(Node: PVirtualNode): Boolean; override;
-    function AddChild(Parent: PVirtualNode; const Provider: INodeProvider): PVirtualNode; overload;
-    function InsertNode(Node: PVirtualNode; Mode: TVTNodeAttachMode; const Provider: INodeProvider): PVirtualNode; overload;
+    function AddChildEx(Parent: PVirtualNode; const Provider: INodeProvider): INodeProvider;
+    function InsertNodeEx(Node: PVirtualNode; Mode: TVTNodeAttachMode; const Provider: INodeProvider): INodeProvider;
   end;
 
 procedure Register;
@@ -151,14 +146,11 @@ end;
 
 { TDevirtualizedTree }
 
-function TDevirtualizedTree.AddChild(
-  Parent: PVirtualNode;
-  const Provider: INodeProvider
-): PVirtualNode;
+function TDevirtualizedTree.AddChildEx;
 begin
   Assert(Assigned(Provider), 'Provider must not be null');
-  Result := inherited AddChild(Parent, IInterface(Provider));
-  Provider.Attach(Result);
+  Provider.Attach(inherited AddChild(Parent, IInterface(Provider)));
+  Result := Provider;
 end;
 
 procedure TDevirtualizedTree.DoBeforeItemErase;
@@ -199,6 +191,30 @@ begin
     Node.Provider.NotifyChecked;
 end;
 
+function TDevirtualizedTree.DoCollapsing;
+begin
+  Result := inherited;
+
+  if Node.HasProvider then
+    Node.Provider.NotifyCollapsing(Result);
+end;
+
+function TDevirtualizedTree.DoExpanding;
+begin
+  Result := inherited;
+
+  if Node.HasProvider then
+    Node.Provider.NotifyExpanding(Result);
+end;
+
+procedure TDevirtualizedTree.DoFreeNode;
+begin
+  if Node.HasProvider then
+    Node.Provider.Detach;
+
+  inherited;
+end;
+
 function TDevirtualizedTree.DoGetNodeHint;
 begin
   Result := inherited;
@@ -216,13 +232,21 @@ begin
 
   // Pre-load the text
   if pEventArgs.Node.HasProvider then
-    pEventArgs.CellText := pEventArgs.Node.Provider.Column[pEventArgs.Column];
+    pEventArgs.CellText := pEventArgs.Node.Provider.ColumnText[
+      pEventArgs.Column];
 
   inherited;
 end;
 
-procedure TDevirtualizedTree.DoPaintText(Node: PVirtualNode;
-  const Canvas: TCanvas; Column: TColumnIndex; TextType: TVSTTextType);
+procedure TDevirtualizedTree.DoInitNode;
+begin
+  inherited;
+
+  if Node.HasProvider then
+    Node.Provider.Initialize;
+end;
+
+procedure TDevirtualizedTree.DoPaintText;
 begin
   // Pre-load font styles
   if (TextType = ttNormal) and Node.HasProvider then
@@ -246,15 +270,11 @@ begin
     Node.Provider.NotifySelected;
 end;
 
-function TDevirtualizedTree.InsertNode(
-  Node: PVirtualNode;
-  Mode: TVTNodeAttachMode;
-  const Provider: INodeProvider
-): PVirtualNode;
+function TDevirtualizedTree.InsertNodeEx;
 begin
   Assert(Assigned(Provider), 'Provider must not be null');
-  Result := inherited InsertNode(Node, Mode, Pointer(IInterface(Provider)));
-  Provider.Attach(Result);
+  Provider.Attach(inherited InsertNode(Node, Mode, Pointer(IInterface(Provider))));
+  Result := Provider;
 end;
 
 function TDevirtualizedTree.OverrideInspectMenuEnabled;
@@ -265,7 +285,7 @@ begin
     Result := inherited;
 end;
 
-procedure TDevirtualizedTree.ValidateNodeDataSize(var Size: Integer);
+procedure TDevirtualizedTree.ValidateNodeDataSize;
 begin
   inherited;
   Size := SizeOf(INodeProvider);

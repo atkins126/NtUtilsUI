@@ -15,8 +15,9 @@ type
     procedure btnCheatsheetClick(Sender: TObject);
     procedure btnDsPickerClick(Sender: TObject);
     procedure tbxSidChange(Sender: TObject);
+    procedure tbxSidEnter(Sender: TObject);
   private
-    FInitialized: Boolean;
+    FLoaded, FInitialized: Boolean;
     FImages: TImageList;
     FOnDsObjectPicked: TNotifyEvent;
     FOnSidChanged: TNotifyEvent;
@@ -36,7 +37,7 @@ type
 implementation
 
 uses
-  DelphiUtils.AutoObjects, NtUtils.Lsa.Sid, NtUiLib.Errors,
+  Ntapi.ntstatus, DelphiUtils.AutoObjects, NtUtils.Lsa.Sid, NtUiLib.Errors,
   NtUiLib.AutoCompletion.Sid, UI.Builtin.DsObjectPicker,
   UI.Prototypes.Sid.Cheatsheet, UI.Prototypes.Forms;
 
@@ -80,11 +81,10 @@ var
 begin
   inherited;
 
-  if FInitialized then
+  if FLoaded then
     Exit;
 
-  FInitialized := True;
-  ShlxEnableSidSuggestions(tbxSid.Handle);
+  FLoaded := True;
 
   // Add icons to the buttons
   FImages := TImageList.Create(Self);
@@ -133,22 +133,38 @@ begin
     FOnSidChanged(Self);
 end;
 
+procedure TSidEditor.tbxSidEnter;
+begin
+  if FInitialized then
+    Exit;
+
+  FInitialized := True;
+  ShlxEnableSidSuggestions(tbxSid.Handle);
+end;
+
 function TSidEditor.TryGetSid;
 begin
+  // Use cache when available
   if Assigned(SidCache) then
   begin
-    // Use cached version
     Sid := SidCache;
     Result := Default(TNtxStatus);
-  end
-  else
-  begin
-    Result := LsaxLookupNameOrSddl(tbxSid.Text, Sid);
-
-    // Cache successful lookups
-    if Result.IsSuccess then
-      SidCache := Sid;
+    Exit;
   end;
+
+  // Workaround empty lookups that give confusing results
+  if (tbxSid.Text = '') or (tbxSid.Text = '\') then
+  begin
+    Result.Location := 'TSidEditor.TryGetSid';
+    Result.Status := STATUS_NONE_MAPPED;
+    Exit;
+  end;
+
+  Result := LsaxLookupNameOrSddl(tbxSid.Text, Sid);
+
+  // Cache successful lookups
+  if Result.IsSuccess then
+    SidCache := Sid;
 end;
 
 end.
