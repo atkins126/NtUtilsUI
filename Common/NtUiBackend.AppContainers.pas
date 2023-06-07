@@ -29,6 +29,7 @@ function UiLibMakeAppContainerNode(
   const Info: TAppContainerInfo
 ): IAppContainerNode;
 
+// Enumerate AppContainers and convert them into node providers
 function UiLibEnumerateAppContainers(
   out Providers: TArray<IAppContainerNode>;
   const User: ISid;
@@ -40,6 +41,10 @@ implementation
 uses
   DevirtualizedTree.Provider, NtUtils.SysUtils, NtUtils.Security.Sid,
   NtUtils.Packages, DelphiUiLib.Reflection.Strings, UI.Colors;
+
+{$BOOLEVAL OFF}
+{$IFOPT R+}{$DEFINE R+}{$ENDIF}
+{$IFOPT Q+}{$DEFINE Q+}{$ENDIF}
 
 { TAppContainerNode }
 
@@ -132,12 +137,7 @@ begin
 
   for i := 0 to High(Sids) do
   begin
-    if not RtlxQueryAppContainer(Info, Sids[i], User).IsSuccess then
-    begin
-      Info := Default(TAppContainerInfo);
-      Info.Sid := Sids[i];
-    end;
-
+    RtlxQueryAppContainer(Info, Sids[i], User);
     Providers[i] := UiLibMakeAppContainerNode(Info);
   end;
 end;

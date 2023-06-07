@@ -7,151 +7,78 @@ unit NtUiFrame.AppContainers;
 interface
 
 uses
-  Winapi.Windows, Winapi.Messages, System.SysUtils, System.Classes,
-  Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, VirtualTrees,
-  VirtualTreesEx, DevirtualizedTree, DevirtualizedTree.Provider,
-  NtUiFrame.Search, NtUtils, NtUiCommon.Interfaces, NtUiBackend.AppContainers;
+  Vcl.Controls, System.Classes, Vcl.Forms, VirtualTrees, VirtualTreesEx,
+  DevirtualizedTree, NtUiFrame.Search, NtUtils, NtUiCommon.Interfaces,
+  NtUiBackend.AppContainers;
 
 type
-  TInspectAppContainer = procedure (const Node: IAppContainerNode) of object;
+  IAppContainerNode = NtUiBackend.AppContainers.IAppContainerNode;
 
-  TAppContainersFrame = class(TFrame, IHasSearch, ICanConsumeEscape)
+  TAppContainersFrame = class (TFrame, IHasSearch, ICanConsumeEscape,
+    IGetFocusedNode, IOnNodeSelection, IHasDefaultCaption)
+  published
     SearchBox: TSearchFrame;
     Tree: TDevirtualizedTree;
-    procedure TreeAddToSelection(Sender: TBaseVirtualTree; Node: PVirtualNode);
-    procedure TreeRemoveFromSelection(Sender: TBaseVirtualTree;
-      Node: PVirtualNode);
   private
-    FOnInspect: TInspectAppContainer;
-    FOnSelectionChanged: TNotifyEvent;
-    procedure InspectNode(Node: PVirtualNode);
-    procedure SetOnInspect(const Value: TInspectAppContainer);
-    function GetSelectedCount: Integer;
-    function GetSelected: TArray<IAppContainerNode>;
-    function GetFocusedItem: IAppContainerNode;
-    property HasSearchImpl: TSearchFrame read SearchBox implements IHasSearch;
-    property CanConsumeEscapeImpl: TSearchFrame read SearchBox implements ICanConsumeEscape;
+    Backend: TTreeNodeInterfaceProvider;
+    BackendRef: IUnknown;
+    property BackendImpl: TTreeNodeInterfaceProvider read Backend implements IGetFocusedNode, IOnNodeSelection;
+    property SearchImpl: TSearchFrame read SearchBox implements IHasSearch, ICanConsumeEscape;
+    function DefaultCaption: String;
   protected
     procedure Loaded; override;
   public
-    procedure ClearItems;
-    function BeginUpdateAuto: IAutoReleasable;
-    procedure AddItem(const Item: IAppContainerNode; const Parent: IAppContainerNode = nil);
-    property OnInspect: TInspectAppContainer read FOnInspect write SetOnInspect;
-    property OnSelectionChanged: TNotifyEvent read FOnSelectionChanged write FOnSelectionChanged;
-    property Selected: TArray<IAppContainerNode> read GetSelected;
-    property SelectedCount: Integer read GetSelectedCount;
-    property FocusedItem: IAppContainerNode read GetFocusedItem;
-    procedure SetNoItemsStatus(const Status: TNtxStatus);
+    procedure LoadForUser(const User: ISid);
   end;
 
 implementation
 
-uses
-  NtUtils.Security.Sid, NtUtils.SysUtils, NtUtils.Packages, DelphiUtils.Arrays,
-  NtUiLib.Errors, DelphiUiLib.Reflection.Strings, UI.Helper, VirtualTrees.Types,
-  UI.Colors;
+{$BOOLEVAL OFF}
+{$IFOPT R+}{$DEFINE R+}{$ENDIF}
+{$IFOPT Q+}{$DEFINE Q+}{$ENDIF}
 
 {$R *.dfm}
 
 { TAppContainersFrame }
 
-procedure TAppContainersFrame.AddItem;
-var
-  ParentNode: PVirtualNode;
+function TAppContainersFrame.DefaultCaption;
 begin
-  if Assigned(Parent) then
-    ParentNode := Parent.Node
-  else
-    ParentNode := Tree.RootNode;
-
-  Tree.AddChildEx(ParentNode, Item);
-
-  if Assigned(Parent) then
-  begin
-    Tree.Expanded[Parent.Node] := True;
-    Tree.TreeOptions.PaintOptions := Tree.TreeOptions.PaintOptions + [toShowRoot];
-  end;
-end;
-
-function TAppContainersFrame.BeginUpdateAuto;
-begin
-  Result := Tree.BeginUpdateAuto;
-end;
-
-procedure TAppContainersFrame.ClearItems;
-begin
-  Tree.Clear;
-  Tree.TreeOptions.PaintOptions := Tree.TreeOptions.PaintOptions - [toShowRoot];
-end;
-
-function TAppContainersFrame.GetFocusedItem;
-begin
-  if not Tree.FocusedNode.TryGetProvider(IAppContainerNode, Result) then
-    Result := nil;
-end;
-
-function TAppContainersFrame.GetSelected;
-begin
-  Result := TArray.Convert<PVirtualNode, IAppContainerNode>(
-    Tree.SelectedNodes.ToArray,
-    function (
-      const Node: PVirtualNode;
-      out Provider: IAppContainerNode
-    ): Boolean
-    begin
-      Result := Node.TryGetProvider(IAppContainerNode, Provider);
-    end
-  );
-end;
-
-function TAppContainersFrame.GetSelectedCount;
-begin
-  Result := Tree.SelectedCount;
-end;
-
-procedure TAppContainersFrame.InspectNode;
-var
-  AppContainerNode: IAppContainerNode;
-begin
-  if Node.TryGetProvider(IAppContainerNode, AppContainerNode) then
-    FOnInspect(AppContainerNode);
+  Result := 'Select AppContainer Profile...'
 end;
 
 procedure TAppContainersFrame.Loaded;
 begin
   inherited;
   SearchBox.AttachToTree(Tree);
+  Backend := TTreeNodeInterfaceProvider.Create(Tree, [teSelectionChange]);
+  BackendRef := Backend; // Make an owning reference
 end;
 
-procedure TAppContainersFrame.SetNoItemsStatus;
+procedure TAppContainersFrame.LoadForUser;
+var
+  Parents, Children: TArray<IAppContainerNode>;
+  Parent, Child: IAppContainerNode;
+  Status: TNtxStatus;
 begin
-  if Status.IsSuccess then
-    Tree.NoItemsText := 'No items to display'
-  else
-    Tree.NoItemsText := 'Unable to query:'#$D#$A + Status.ToString;
-end;
+  Backend.BeginUpdateAuto;
+  Backend.ClearItems;
 
-procedure TAppContainersFrame.SetOnInspect;
-begin
-  FOnInspect := Value;
+  // Enumerate parent AppContainers
+  Status := UiLibEnumerateAppContainers(Parents, User);
+  Backend.SetStatus(Status);
 
-  if Assigned(Value) then
-    Tree.OnInspectNode := InspectNode
-  else
-    Tree.OnInspectNode := nil;
-end;
+  if not Status.IsSuccess then
+    Exit;
 
-procedure TAppContainersFrame.TreeAddToSelection;
-begin
-  if Assigned(FOnSelectionChanged) then
-    FOnSelectionChanged(Self);
-end;
+  for Parent in Parents do
+  begin
+    Backend.AddItem(Parent);
 
-procedure TAppContainersFrame.TreeRemoveFromSelection;
-begin
-  if Assigned(FOnSelectionChanged) then
-    FOnSelectionChanged(Self);
+    // Enumerate child AppContainers
+    if UiLibEnumerateAppContainers(Children, User, Parent.Info.Sid).IsSuccess then
+      for Child in Children do
+        Backend.AddItem(Child, Parent);
+  end;
 end;
 
 end.

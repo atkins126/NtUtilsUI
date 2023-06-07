@@ -3,8 +3,8 @@ object AppContainersFrame: TAppContainersFrame
   Top = 0
   Width = 600
   Height = 407
-  Constraints.MinHeight = 120
-  Constraints.MinWidth = 280
+  Constraints.MinHeight = 150
+  Constraints.MinWidth = 300
   ParentShowHint = False
   ShowHint = True
   TabOrder = 0
@@ -52,8 +52,6 @@ object AppContainersFrame: TAppContainersFrame
     TreeOptions.MiscOptions = [toAcceptOLEDrop, toFullRepaintOnResize, toInitOnSave, toToggleOnDblClick, toWheelPanning]
     TreeOptions.PaintOptions = [toHideFocusRect, toHotTrack, toShowButtons, toShowDropmark, toShowTreeLines, toThemeAware, toUseBlendedImages, toUseExplorerTheme]
     TreeOptions.SelectionOptions = [toFullRowSelect, toMultiSelect, toRightClickSelect]
-    OnAddToSelection = TreeAddToSelection
-    OnRemoveFromSelection = TreeRemoveFromSelection
     Touch.InteractiveGestures = [igPan, igPressAndTap]
     Touch.InteractiveGestureOptions = [igoPanSingleFingerHorizontal, igoPanSingleFingerVertical, igoPanInertia, igoPanGutter, igoParentPassthrough]
     NoItemsText = 'No items to display'
